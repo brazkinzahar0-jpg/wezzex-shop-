@@ -1,0 +1,20 @@
+FROM python:3.12-slim-bookworm
+
+WORKDIR /opt/remnashop
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+COPY uv.lock .
+COPY docker-entrypoint.sh .
+
+RUN pip install --no-cache-dir uv && uv sync --frozen
+
+ENV UVICORN_RELOAD_ENABLED=true
+ENV PATH="/opt/remnashop/.venv/bin:$PATH"
+
+RUN chmod +x ./docker-entrypoint.sh
+
+CMD ["./docker-entrypoint.sh"]

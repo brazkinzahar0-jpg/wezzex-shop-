@@ -1,0 +1,122 @@
+services:
+  remnashop-db:
+    image: postgres:17
+    container_name: "remnashop-db"
+    hostname: remnashop-db
+    restart: unless-stopped
+
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_USER=${DATABASE_USER}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+      - POSTGRES_DB=${DATABASE_NAME}
+      - TZ=UTC
+
+    ports:
+      - "5432:5432"
+      
+    volumes:
+      - remnashop-db-data:/var/lib/postgresql/data
+
+    networks:
+      - remnawave-network
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 10s
+      retries: 3
+    
+
+  remnashop-redis:
+    image: valkey/valkey:9-alpine
+    container_name: "remnashop-redis"
+    hostname: remnashop-redis
+    restart: unless-stopped
+
+    command: [ "--requirepass", "${REDIS_PASSWORD}" ]
+
+    volumes:
+      - remnashop-redis-data:/data
+
+    networks:
+      - remnawave-network
+
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 3
+    
+
+  remnashop:
+    &remnashop
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    container_name: "remnashop-local"
+    hostname: remnashop
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    depends_on:
+        remnashop-db:
+          condition: service_healthy
+        remnashop-redis:
+          condition: service_healthy
+
+    volumes:
+      - ./src:/opt/remnashop/src
+      - ./logs:/opt/remnashop/logs
+      - ./assets:/opt/remnashop/assets
+
+    networks:
+      - remnawave-network
+    
+
+  remnashop-taskiq-worker:
+    <<: *remnashop
+    container_name: "remnashop-taskiq-worker"
+    hostname: remnashop-taskiq-worker
+    command: taskiq worker src.infrastructure.taskiq.worker:worker 
+      --tasks-pattern src/infrastructure/taskiq/tasks -fsd
+
+    depends_on:
+        remnashop-redis:
+          condition: service_healthy
+        remnashop-db:
+          condition: service_healthy
+
+  remnashop-taskiq-scheduler:
+    <<: *remnashop
+    container_name: "remnashop-taskiq-scheduler"
+    hostname: remnashop-taskiq-scheduler
+    command: taskiq scheduler src.infrastructure.taskiq.scheduler:scheduler
+      --tasks-pattern src/infrastructure/taskiq/tasks -fsd
+
+    depends_on:
+        remnashop-redis:
+          condition: service_healthy
+        remnashop-db:
+          condition: service_healthy
+
+
+networks:
+  remnawave-network:
+    name: remnawave-network
+    driver: bridge
+    external: false
+
+volumes:
+  remnashop-db-data:
+    name: remnashop-db-data
+    driver: local
+    external: false
+    
+  remnashop-redis-data:
+    name: remnashop-redis-data
+    driver: local
+    external: false
